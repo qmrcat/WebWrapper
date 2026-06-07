@@ -1,0 +1,6 @@
+{
+  "name": "WebWrapper",
+  "description": "Un gestor i navegador de pàgines web que permet organitzar, cercar i obrir els vostres llocs web preferits en pantalles immersives personalitzades.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
