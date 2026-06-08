@@ -3,9 +3,17 @@ package com.example.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -275,6 +283,7 @@ fun LibraryShortcutRow(
     onEdit: () -> Unit
 ) {
     var expandedMenu by remember { mutableStateOf(false) }
+    var showPinDialog by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
@@ -357,35 +366,11 @@ fun LibraryShortcutRow(
                     expanded = expandedMenu,
                     onDismissRequest = { expandedMenu = false }
                 ) {
-                    val context = LocalContext.current
                     DropdownMenuItem(
                         text = { Text("Afegir a l'inici") },
                         onClick = {
                             expandedMenu = false
-                            if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
-                                val deepLinkUri = Uri.parse(
-                                    "webwrapper://open?url=${Uri.encode(site.url)}" +
-                                            "&fullscreen=${site.isFullscreen}" +
-                                            "&js_enabled=${site.isJsEnabled}" +
-                                            "&name=${Uri.encode(site.name)}"
-                                )
-                                val shortcutIntent = Intent(Intent.ACTION_VIEW, deepLinkUri).apply {
-                                    `package` = context.packageName
-                                    setClass(context, MainActivity::class.java)
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
-                                }
-                                val shortcutInfo = ShortcutInfoCompat.Builder(context, "shortcut_${site.id}")
-                                    .setShortLabel(site.name)
-                                    .setLongLabel(site.name)
-                                    .setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
-                                    .setIntent(shortcutIntent)
-                                    .build()
-                                
-                                ShortcutManagerCompat.requestPinShortcut(context, shortcutInfo, null)
-                                Toast.makeText(context, "Sol·licitud enviada per a ${site.name}!", Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(context, "El teu terminal no admet accessos directes", Toast.LENGTH_SHORT).show()
-                            }
+                            showPinDialog = true
                         },
                         leadingIcon = {
                             Icon(
@@ -425,6 +410,389 @@ fun LibraryShortcutRow(
             }
         }
     }
+
+    if (showPinDialog) {
+        PinShortcutDialog(
+            site = site,
+            onDismiss = { showPinDialog = false }
+        )
+    }
+}
+
+data class EmojiPreset(val emoji: String, val hexColor: String, val label: String)
+
+fun createEmojiBitmap(context: android.content.Context, emoji: String, backgroundColorInt: Int): Bitmap {
+    val size = 128
+    val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    
+    // Draw background circle
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    paint.color = backgroundColorInt
+    canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+    
+    // Draw emoji
+    paint.color = android.graphics.Color.WHITE
+    paint.textSize = size * 0.55f
+    paint.textAlign = Paint.Align.CENTER
+    
+    val fontMetrics = paint.fontMetrics
+    val y = (size / 2f) - (fontMetrics.ascent + fontMetrics.descent) / 2f
+    
+    canvas.drawText(emoji, size / 2f, y, paint)
+    return bitmap
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PinShortcutDialog(
+    site: SavedSite,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    
+    var shortcutName by remember { mutableStateOf(site.name) }
+    var selectedOption by remember { mutableStateOf("favicon") } // "favicon", "app_icon", "emoji"
+    
+    // Preset emojis and color hexes
+    val emojiPresets = remember {
+        listOf(
+            EmojiPreset("🌐", "#1E88E5", "Web"),
+            EmojiPreset("📝", "#4CAF50", "Notes"),
+            EmojiPreset("🛒", "#FF9800", "Botiga"),
+            EmojiPreset("🎮", "#9C27B0", "Jocs"),
+            EmojiPreset("📺", "#E53935", "Vídeo"),
+            EmojiPreset("💬", "#E91E63", "Xat"),
+            EmojiPreset("🎵", "#FDD835", "Música"),
+            EmojiPreset("📰", "#00ACC1", "Notícies"),
+            EmojiPreset("📧", "#5E35B1", "Correu"),
+            EmojiPreset("👤", "#00897B", "Perfil"),
+            EmojiPreset("❤️", "#D81B60", "Favorit"),
+            EmojiPreset("💡", "#FFB300", "Idea")
+        )
+    }
+    
+    var selectedPresetIndex by remember { mutableStateOf(0) }
+    var isPinningInProgress by remember { mutableStateOf(false) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = "Afegir a la pantalla d'inici",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Live preview card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f)
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "PREVISTA A LA PANTALLA D'INICI",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        
+                        // Icon Preview
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.surface)
+                                .padding(2.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            when (selectedOption) {
+                                "favicon" -> {
+                                    AsyncImage(
+                                        model = ImageRequest.Builder(LocalContext.current)
+                                            .data(site.faviconUrl ?: "https://www.google.com/s2/favicons?sz=128&domain=" + site.url)
+                                            .crossfade(true)
+                                            .build(),
+                                        contentDescription = "Favicon Preview",
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(8.dp)),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                }
+                                "app_icon" -> {
+                                    Icon(
+                                        imageVector = Icons.Default.Language,
+                                        contentDescription = "App Icon Preview",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(44.dp)
+                                    )
+                                }
+                                "emoji" -> {
+                                    val preset = emojiPresets[selectedPresetIndex]
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(CircleShape)
+                                            .background(Color(android.graphics.Color.parseColor(preset.hexColor))),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = preset.emoji,
+                                            style = MaterialTheme.typography.titleLarge
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        
+                        Text(
+                            text = shortcutName.ifEmpty { "Drecera" },
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                
+                // Name Input
+                OutlinedTextField(
+                    value = shortcutName,
+                    onValueChange = { shortcutName = it },
+                    label = { Text("Nom de la drecera") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                
+                // Icon source tabs
+                Text(
+                    text = "Tipus d'icona",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
+                )
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val options = listOf(
+                        Triple("favicon", "Favicon", Icons.Default.Language),
+                        Triple("app_icon", "App Icon", Icons.Default.Launch),
+                        Triple("emoji", "Emoji", Icons.Default.Face)
+                    )
+                    
+                    options.forEach { (type, label, icon) ->
+                        val isSelected = selectedOption == type
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { selectedOption = type },
+                            label = { Text(label) },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                
+                // Emoji options grid helper
+                if (selectedOption == "emoji") {
+                    Text(
+                        text = "Seleccioneu un disseny",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                    
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        emojiPresets.chunked(4).forEach { rowPresets ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowPresets.forEach { preset ->
+                                    val index = emojiPresets.indexOf(preset)
+                                    val isPresetSelected = selectedPresetIndex == index
+                                    
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .aspectRatio(1f)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(
+                                                if (isPresetSelected) MaterialTheme.colorScheme.primaryContainer 
+                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                                            )
+                                            .border(
+                                                width = if (isPresetSelected) 2.dp else 1.dp,
+                                                color = if (isPresetSelected) MaterialTheme.colorScheme.primary 
+                                                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                                shape = RoundedCornerShape(12.dp)
+                                            )
+                                            .clickable { selectedPresetIndex = index }
+                                            .padding(6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(android.graphics.Color.parseColor(preset.hexColor))),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = preset.emoji,
+                                                    style = MaterialTheme.typography.bodyLarge
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(2.dp))
+                                            Text(
+                                                text = preset.label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (ShortcutManagerCompat.isRequestPinShortcutSupported(context)) {
+                        isPinningInProgress = true
+                        
+                        val deepLinkUri = Uri.parse(
+                            "webwrapper://open?url=${Uri.encode(site.url)}" +
+                                    "&fullscreen=${site.isFullscreen}" +
+                                    "&js_enabled=${site.isJsEnabled}" +
+                                    "&name=${Uri.encode(shortcutName)}"
+                        )
+                        
+                        val shortcutIntent = Intent(Intent.ACTION_VIEW, deepLinkUri).apply {
+                            `package` = context.packageName
+                            setClass(context, MainActivity::class.java)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT or Intent.FLAG_ACTIVITY_MULTIPLE_TASK)
+                        }
+                        
+                        scope.launch {
+                            try {
+                                val shortcutBuilder = ShortcutInfoCompat.Builder(context, "shortcut_${site.id}")
+                                    .setShortLabel(shortcutName)
+                                    .setLongLabel(shortcutName)
+                                    .setIntent(shortcutIntent)
+                                
+                                when (selectedOption) {
+                                    "app_icon" -> {
+                                        shortcutBuilder.setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+                                    }
+                                    "emoji" -> {
+                                        val preset = emojiPresets[selectedPresetIndex]
+                                        val bitmap = createEmojiBitmap(
+                                            context, 
+                                            preset.emoji, 
+                                            android.graphics.Color.parseColor(preset.hexColor)
+                                        )
+                                        shortcutBuilder.setIcon(IconCompat.createWithBitmap(bitmap))
+                                    }
+                                    "favicon" -> {
+                                        val faviconUrl = site.faviconUrl ?: "https://www.google.com/s2/favicons?sz=128&domain=" + site.url
+                                        val request = ImageRequest.Builder(context)
+                                            .data(faviconUrl)
+                                            .allowHardware(false)
+                                            .build()
+                                        
+                                        val loader = coil.Coil.imageLoader(context)
+                                        val result = loader.execute(request)
+                                        val drawable = result.drawable
+                                        
+                                        if (drawable != null) {
+                                            val sourceBitmap = drawable.toBitmap()
+                                            val sizedBitmap = Bitmap.createScaledBitmap(sourceBitmap, 128, 128, true)
+                                            shortcutBuilder.setIcon(IconCompat.createWithBitmap(sizedBitmap))
+                                        } else {
+                                            shortcutBuilder.setIcon(IconCompat.createWithResource(context, R.mipmap.ic_launcher))
+                                        }
+                                    }
+                                }
+                                
+                                val shortcutInfo = shortcutBuilder.build()
+                                ShortcutManagerCompat.requestPinShortcut(context, shortcutInfo, null)
+                                Toast.makeText(context, "Sol·licitud enviada per a $shortcutName!", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Error: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                            } finally {
+                                isPinningInProgress = false
+                                onDismiss()
+                            }
+                        }
+                    } else {
+                        Toast.makeText(context, "El teu terminal no admet accessos directes", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    }
+                },
+                enabled = !isPinningInProgress && shortcutName.isNotEmpty()
+            ) {
+                if (isPinningInProgress) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Creant...")
+                } else {
+                    Text("Afegir")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = onDismiss,
+                enabled = !isPinningInProgress
+            ) {
+                Text("Cancel·lar")
+            }
+        }
+    )
 }
 
 /**

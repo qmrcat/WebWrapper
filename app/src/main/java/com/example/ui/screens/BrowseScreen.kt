@@ -22,6 +22,8 @@ import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,9 +57,41 @@ fun BrowseScreen(
     val savedSites by viewModel.allSites.collectAsState()
     val fabAlignmentOnRight by viewModel.fabAlignmentOnRight.collectAsState()
     val hideFloatingActionButton by viewModel.hideFloatingActionButton.collectAsState()
+    val isFromShortcut by viewModel.isFromShortcut.collectAsState()
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val coroutineScope = rememberCoroutineScope()
+    var reloadTrigger by remember { mutableStateOf(0) }
+    var showControls by remember { mutableStateOf(true) }
+    var showTinyButton by remember { mutableStateOf(true) }
+
+    // Reset showControls and showTinyButton on reload trigger or when progress starts
+    LaunchedEffect(progress, reloadTrigger) {
+        if (progress < 100 || reloadTrigger > 0) {
+            showControls = true
+            showTinyButton = true
+        }
+    }
+
+    // Auto-hide controls and tiny button effect
+    LaunchedEffect(showControls, progress, reloadTrigger) {
+        if (showControls) {
+            showTinyButton = true
+            if (progress < 100) {
+                // Keep visible while loading (up to 12 seconds in case a resource hangs)
+                kotlinx.coroutines.delay(12000)
+                showControls = false
+            } else {
+                // Wait for 5 seconds of idle time and then smoothly hide
+                kotlinx.coroutines.delay(5000)
+                showControls = false
+            }
+        } else {
+            // Once main controls hide, keep the tiny button visible for 15 seconds, then hide it too
+            kotlinx.coroutines.delay(15000)
+            showTinyButton = false
+        }
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -253,7 +287,7 @@ fun BrowseScreen(
     ) {
         Scaffold(
             topBar = {
-                if (!isFullscreen) {
+                if (!isFullscreen && showControls) {
                     Column {
                         CenterAlignedTopAppBar(
                             navigationIcon = {
@@ -283,6 +317,14 @@ fun BrowseScreen(
                             },
                             actions = {
                                 if (currentUrl != "dailyecho://home") {
+                                    IconButton(onClick = {
+                                        reloadTrigger++
+                                    }) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Actualitzar"
+                                        )
+                                    }
                                     IconButton(onClick = {
                                         viewModel.selectUrl("dailyecho://home", "The Daily Echo", false, true)
                                     }) {
@@ -332,6 +374,15 @@ fun BrowseScreen(
                 }
             }
         ) { innerPadding ->
+            var isRefreshing by remember { mutableStateOf(false) }
+
+            // Reset refreshing state when web progress reaches 100%
+            LaunchedEffect(progress) {
+                if (progress >= 100) {
+                    isRefreshing = false
+                }
+            }
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -345,11 +396,137 @@ fun BrowseScreen(
                         }
                     )
                 } else {
-                    AppWebView(
-                        url = currentUrl,
-                        isJsEnabled = isJsEnabled,
-                        onProgressChanged = { viewModel.setProgress(it) }
-                    )
+                    val pullToRefreshState = rememberPullToRefreshState()
+                    LaunchedEffect(pullToRefreshState.distanceFraction) {
+                        if (pullToRefreshState.distanceFraction > 0.05f && (!showControls || !showTinyButton)) {
+                            showControls = true
+                            showTinyButton = true
+                        }
+                    }
+
+                    PullToRefreshBox(
+                        isRefreshing = isRefreshing,
+                        onRefresh = {
+                            isRefreshing = true
+                            reloadTrigger++
+                        },
+                        state = pullToRefreshState,
+                        modifier = Modifier.fillMaxSize()
+                    ) {
+                        AppWebView(
+                            url = currentUrl,
+                            isJsEnabled = isJsEnabled,
+                            reloadTrigger = reloadTrigger,
+                            onProgressChanged = { viewModel.setProgress(it) }
+                        )
+                    }
+
+                    // Custom loading progress bar for full screen mode
+                    if (progress > 0 && progress < 100) {
+                        LinearProgressIndicator(
+                            progress = { progress / 100f },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.TopStart)
+                                .statusBarsPadding(),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = Color.Transparent
+                        )
+                    }
+
+                    if (showControls) {
+                        if (isFullscreen) {
+                            // Small floating semi-transparent capsule for web controls when in fullscreen
+                            Surface(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .statusBarsPadding()
+                                    .padding(top = 10.dp, end = 12.dp),
+                                shape = RoundedCornerShape(24.dp),
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.75f),
+                                tonalElevation = 4.dp,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    // Reload button
+                                    IconButton(
+                                        onClick = {
+                                            reloadTrigger++
+                                            showControls = true
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Actualitzar",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+
+                                    // Other shortcuts are NOT needed when launched from pinnable shortcut
+                                    if (!isFromShortcut) {
+                                        // Home button
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.selectUrl("dailyecho://home", "The Daily Echo", false, true)
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Home,
+                                                contentDescription = "Home",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        // Exit fullscreen button
+                                        IconButton(
+                                            onClick = {
+                                                viewModel.selectUrl(currentUrl, currentSiteName, false, isJsEnabled)
+                                            },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.FullscreenExit,
+                                                contentDescription = "Sortir de pantalla completa",
+                                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if (showTinyButton) {
+                        // Tiny floating translucent button to restore controls
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .statusBarsPadding()
+                                .padding(top = 10.dp, end = 12.dp),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.35f),
+                            tonalElevation = 2.dp,
+                            onClick = { showControls = true }
+                        ) {
+                            Box(
+                                modifier = Modifier.size(36.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Mostrar controls i actualitzar",
+                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.61f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -364,6 +541,7 @@ fun BrowseScreen(
 fun AppWebView(
     url: String,
     isJsEnabled: Boolean,
+    reloadTrigger: Int,
     onProgressChanged: (Int) -> Unit
 ) {
     val context = LocalContext.current
@@ -393,8 +571,8 @@ fun AppWebView(
         }
     }
 
-    // React to URL and Javascript toggle modifications dynamically
-    LaunchedEffect(url, isJsEnabled) {
+    // React to URL, Javascript and reload modifications dynamically
+    LaunchedEffect(url, isJsEnabled, reloadTrigger) {
         webView.settings.apply {
             javaScriptEnabled = isJsEnabled
             domStorageEnabled = true
@@ -402,7 +580,7 @@ fun AppWebView(
             loadWithOverviewMode = true
             builtInZoomControls = true
             displayZoomControls = false
-            cacheMode = WebSettings.LOAD_DEFAULT
+            cacheMode = if (reloadTrigger > 0) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
         }
         webView.loadUrl(url)
     }

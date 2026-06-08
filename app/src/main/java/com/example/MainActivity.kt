@@ -109,7 +109,8 @@ class MainActivity : ComponentActivity() {
                         url = urlParam,
                         name = nameParam,
                         isFullscreen = isFullscreenParam,
-                        isJsEnabled = isJsParam
+                        isJsEnabled = isJsParam,
+                        isShortcut = true
                     )
                     viewModel.setHideFloatingActionButton(hideFabParam || isFullscreenParam)
                     viewModel.setActiveTab(Tab.Browse)

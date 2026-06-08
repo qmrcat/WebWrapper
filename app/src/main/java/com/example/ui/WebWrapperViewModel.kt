@@ -52,6 +52,10 @@ class WebWrapperViewModel(application: Application) : AndroidViewModel(applicati
     private val _hideFloatingActionButton = MutableStateFlow(false)
     val hideFloatingActionButton: StateFlow<Boolean> = _hideFloatingActionButton.asStateFlow()
 
+    // Flag indicating if current page is opened from an app shortcut
+    private val _isFromShortcut = MutableStateFlow(false)
+    val isFromShortcut: StateFlow<Boolean> = _isFromShortcut.asStateFlow()
+
     init {
         val database = AppDatabase.getDatabase(application)
         repository = SavedSiteRepository(database.savedSiteDao())
@@ -105,11 +109,16 @@ class WebWrapperViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun selectUrl(url: String, name: String, isFullscreen: Boolean, isJsEnabled: Boolean) {
+    fun selectUrl(url: String, name: String, isFullscreen: Boolean, isJsEnabled: Boolean, isShortcut: Boolean = false) {
         _currentUrl.value = url
         _currentSiteName.value = name
         _isFullscreenActive.value = isFullscreen
         _isJsEnabledActive.value = isJsEnabled
+        _isFromShortcut.value = isShortcut
+    }
+
+    fun setIsFromShortcut(isShortcut: Boolean) {
+        _isFromShortcut.value = isShortcut
     }
 
     fun setProgress(progress: Int) {
